@@ -41,6 +41,7 @@ Production-grade GCP infrastructure defined entirely in Terraform. Demonstrates 
 | **iam** | Service accounts with least-privilege roles | `google_service_account`, `google_project_iam_member` |
 | **gke** | GKE Autopilot cluster with private nodes and Workload Identity | `google_container_cluster` |
 | **database** | Cloud SQL Postgres with private IP and automated backups | `google_sql_database_instance`, `google_sql_database` |
+| **budget** | Billing budget with alerts at 50%, 80%, 100% of monthly limit | `google_billing_budget` |
 
 ## Design Decisions
 
@@ -58,6 +59,9 @@ Without Workload Identity, pods typically use the node's service account (overly
 
 ### Why private IP for Cloud SQL?
 A public IP on a database is an unnecessary attack surface. Private IP means the database is only reachable from within the VPC — the only path in is through the GKE cluster.
+
+### Why a billing budget in Terraform?
+Cost management is part of infrastructure. A $10 monthly budget with alerts at 50%, 80%, and 100% prevents surprise bills during development. Defining it in Terraform means the guardrail is version-controlled and deployed with everything else — it can't be accidentally deleted from the console.
 
 ### Why dedicated service accounts?
 The default Compute Engine service account has `Editor` role on the project — far too much access. Dedicated service accounts with only the roles they need (artifact registry reader, log writer, Cloud SQL client) follow least-privilege principles.

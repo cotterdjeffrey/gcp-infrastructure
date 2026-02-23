@@ -12,3 +12,8 @@ variable "environment" {
   description = "Environment name (dev, staging, prod)"
   type        = string
 }
+
+variable "billing_account_id" {
+  description = "GCP billing account ID"
+  type        = string
+}

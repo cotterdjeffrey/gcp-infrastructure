@@ -35,3 +35,12 @@ module "database" {
   network_id                  = module.networking.network_id
   private_services_connection = module.networking.private_services_connection
 }
+
+module "budget" {
+  source = "../../modules/budget"
+
+  project_id         = var.project_id
+  billing_account_id = var.billing_account_id
+  environment        = var.environment
+  monthly_limit      = 10
+}

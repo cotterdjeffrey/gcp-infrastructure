@@ -1,4 +1,4 @@
-# GCP Infrastructure — Terraform IaC Portfolio Project
+# GCP Infrastructure — Terraform IaC
 
 Production-grade GCP infrastructure defined entirely in Terraform. Demonstrates VPC networking, GKE Autopilot, Cloud SQL, IAM least-privilege, and a containerized FastAPI application — all validated via `terraform plan` with zero cloud spend.
 

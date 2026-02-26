@@ -12,16 +12,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
-        with:
-          version: v1.29.0
+      - name: Install kubeconform
+        run: |
+          curl -sL https://github.com/yannh/kubeconform/releases/download/v0.6.6/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
 
       - name: Validate all manifests
         run: |
           echo "Validating Kubernetes manifests..."
-          find k8s/ -name '*.yaml' -print0 | while IFS= read -r -d '' file; do
-            echo "  Checking $file"
-            kubectl apply --dry-run=client --validate=false -f "$file" 2>&1 || exit 1
-          done
+          find k8s/ -name '*.yaml' -print0 | xargs -0 -n1 kubeconform -strict -summary
           echo "All manifests valid."

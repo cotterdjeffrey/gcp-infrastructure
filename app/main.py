@@ -1,9 +1,11 @@
 """FastAPI application demonstrating a cloud-native microservice."""
 
 import os
+import time
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 from sqlalchemy import create_engine, Column, Integer, String, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
@@ -39,6 +41,66 @@ class ItemResponse(BaseModel):
 
 
 app = FastAPI(title="GCP Infrastructure Demo App")
+
+# --- Prometheus metrics (RED method) ---
+REQUEST_COUNT = Counter(
+    "http_requests_total",
+    "Total HTTP requests",
+    ["method", "endpoint", "status"],
+)
+REQUEST_DURATION = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request duration in seconds",
+    ["method", "endpoint"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+REQUESTS_IN_PROGRESS = Gauge(
+    "http_requests_in_progress",
+    "HTTP requests currently being processed",
+    ["method", "endpoint"],
+)
+
+
+@app.middleware("http")
+async def prometheus_middleware(request: Request, call_next):
+    # Use route template (e.g. /items/{item_id}) to avoid cardinality explosion
+    # Fall back to path for unmatched routes (404s)
+    method = request.method
+    path = request.url.path
+
+    if path == "/metrics":
+        return await call_next(request)
+
+    # Resolve the route template before the request completes
+    endpoint = path
+    for route in app.routes:
+        if hasattr(route, "path") and hasattr(route, "methods"):
+            if method in route.methods:
+                match, _ = route.matches({"type": "http", "method": method, "path": path})
+                if match.value == 2:  # FULL match
+                    endpoint = route.path
+                    break
+
+    REQUESTS_IN_PROGRESS.labels(method=method, endpoint=endpoint).inc()
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        REQUEST_COUNT.labels(method=method, endpoint=endpoint, status=500).inc()
+        raise
+    finally:
+        duration = time.perf_counter() - start
+        REQUESTS_IN_PROGRESS.labels(method=method, endpoint=endpoint).dec()
+        REQUEST_DURATION.labels(method=method, endpoint=endpoint).observe(duration)
+
+    REQUEST_COUNT.labels(method=method, endpoint=endpoint, status=response.status_code).inc()
+    return response
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    """Prometheus metrics endpoint."""
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 def get_db():

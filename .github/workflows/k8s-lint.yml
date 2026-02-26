@@ -1,0 +1,27 @@
+name: K8s Manifest Lint
+
+on:
+  pull_request:
+    branches: [main]
+    paths: [k8s/**]
+
+jobs:
+  validate:
+    name: Validate Manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.29.0
+
+      - name: Validate all manifests
+        run: |
+          echo "Validating Kubernetes manifests..."
+          find k8s/ -name '*.yaml' -print0 | while IFS= read -r -d '' file; do
+            echo "  Checking $file"
+            kubectl apply --dry-run=client -f "$file" 2>&1 || exit 1
+          done
+          echo "All manifests valid."

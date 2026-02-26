@@ -76,15 +76,30 @@ The default Compute Engine service account has `Editor` role on the project — 
 
 Pod range is intentionally large — GKE allocates 256 IPs per node by default, so a `/14` supports scaling without re-architecting.
 
+## CI/CD
+
+GitHub Actions runs on every code change — no manual validation needed.
+
+| Workflow | Trigger | What it does |
+|----------|---------|--------------|
+| **Terraform CI** | Pull request → `main` | Format check → Init + Validate → Plan (posted as PR comment) |
+| **Docker CI** | Push to `main` | Builds the container image to verify the app still compiles |
+
+The Terraform CI pipeline uses a read-only service account (`terraform-ci`) that can run `terraform plan` but never create or modify resources. Production would replace the JSON key with [Workload Identity Federation](https://cloud.google.com/iam/docs/workload-identity-federation) for keyless authentication.
+
 ## Project Structure
 
 ```
 gcp-infrastructure/
+├── .github/workflows/    # CI/CD pipelines
+│   ├── terraform-ci.yml  # Terraform validation on PRs
+│   └── docker-ci.yml     # Docker build on merge to main
 ├── modules/              # Reusable Terraform modules
 │   ├── networking/       # VPC, subnets, firewall rules
 │   ├── iam/              # Service accounts, role bindings
 │   ├── gke/              # GKE Autopilot cluster
-│   └── database/         # Cloud SQL Postgres
+│   ├── database/         # Cloud SQL Postgres
+│   └── budget/           # Billing budget alerts
 ├── environments/
 │   └── dev/              # Dev environment wiring
 ├── app/                  # FastAPI application + Dockerfile
@@ -123,9 +138,9 @@ Built with 12-factor principles: configuration via environment variables, statel
 
 ## What I'd Add in Production
 
-- **CI/CD** (Project 2): GitHub Actions pipeline for `terraform plan` on PRs, automated Docker builds
 - **Monitoring** (Project 3): Prometheus + Grafana on GKE for metrics and alerting
 - **Security hardening** (Project 4): Kubernetes network policies, pod security standards, secret management via Secret Manager
 - **Multi-region**: Regional GKE clusters with global load balancing
 - **Secret management**: Replace hardcoded DB password with GCP Secret Manager
 - **DNS + TLS**: Cloud DNS + managed certificates via cert-manager
+- **Workload Identity Federation**: Replace CI service account key with keyless auth

@@ -1,0 +1,15 @@
+name: Docker CI
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t gcp-infra-app:${{ github.sha }} ./app

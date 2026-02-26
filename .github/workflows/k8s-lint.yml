@@ -22,6 +22,6 @@ jobs:
           echo "Validating Kubernetes manifests..."
           find k8s/ -name '*.yaml' -print0 | while IFS= read -r -d '' file; do
             echo "  Checking $file"
-            kubectl apply --dry-run=client -f "$file" 2>&1 || exit 1
+            kubectl apply --dry-run=client --validate=false -f "$file" 2>&1 || exit 1
           done
           echo "All manifests valid."

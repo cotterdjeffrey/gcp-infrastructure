@@ -244,10 +244,8 @@ A FastAPI microservice with:
 
 Built with 12-factor principles: configuration via environment variables, stateless processes, and a multi-stage Docker build running as a non-root user.
 
-## What I'd Add in Production
+## What I'd Add Next
 
-- ~~**Monitoring** (Project 3): Prometheus + Grafana on GKE for metrics and alerting~~ **Done** — see [Monitoring & Observability](#monitoring--observability) above
-- ~~**Security hardening** (Project 4): Network policies, pod security, secret management, container scanning~~ **Done** — see [Security Hardening](#security-hardening) above
 - **Secrets Store CSI Driver**: Sync secrets directly from GCP Secret Manager into pods, eliminating K8s Secret objects entirely
 - **Alerting rules**: Prometheus alertmanager with PagerDuty/Slack integration for SLO breaches
 - **Persistent storage for Prometheus**: PersistentVolumeClaim instead of emptyDir

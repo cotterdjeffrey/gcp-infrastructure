@@ -9,10 +9,18 @@ on:
 
 jobs:
   build:
-    name: Build Image
+    name: Build & Scan Image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
         run: docker build -t gcp-infra-app:${{ github.sha }} ./app
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: gcp-infra-app:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH

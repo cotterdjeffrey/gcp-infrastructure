@@ -43,5 +43,5 @@ resource "google_sql_user" "app" {
   name     = "app"
   project  = var.project_id
   instance = google_sql_database_instance.postgres.name
-  password = "changeme-use-secret-manager-in-production"
+  password = var.db_password
 }

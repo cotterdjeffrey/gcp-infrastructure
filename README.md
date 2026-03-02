@@ -1,6 +1,6 @@
-# GCP Infrastructure — Terraform IaC + Monitoring
+# GCP Infrastructure — Terraform IaC + Monitoring + Security Hardening
 
-Production-grade GCP infrastructure defined entirely in Terraform, with Prometheus + Grafana observability. Demonstrates VPC networking, GKE Autopilot, Cloud SQL, IAM least-privilege, application instrumentation with RED method metrics, and a containerized FastAPI application — all validated via `terraform plan` with zero cloud spend.
+Production-grade GCP infrastructure defined entirely in Terraform, with Prometheus + Grafana observability and defense-in-depth security hardening. Demonstrates VPC networking, GKE Autopilot, Cloud SQL, IAM least-privilege, pod security standards, network policies, secret management, container image scanning, and a containerized FastAPI application — all validated via `terraform plan` with zero cloud spend.
 
 ## Architecture
 
@@ -41,6 +41,7 @@ Production-grade GCP infrastructure defined entirely in Terraform, with Promethe
 | **iam** | Service accounts with least-privilege roles | `google_service_account`, `google_project_iam_member` |
 | **gke** | GKE Autopilot cluster with private nodes and Workload Identity | `google_container_cluster` |
 | **database** | Cloud SQL Postgres with private IP and automated backups | `google_sql_database_instance`, `google_sql_database` |
+| **secrets** | Secret Manager with IAM-based access control | `google_secret_manager_secret`, `google_secret_manager_secret_iam_member` |
 | **budget** | Billing budget with alerts at 50%, 80%, 100% of monthly limit | `google_billing_budget` |
 
 ## Design Decisions
@@ -102,7 +103,7 @@ The ~30-line middleware class is intentional. Libraries like `prometheus-fastapi
 - **Prometheus service discovery via annotations** — app pods get `prometheus.io/scrape: "true"`, Prometheus finds them automatically via Kubernetes SD
 - **ClusterIP for both services** — no external access; use `kubectl port-forward` for debugging
 - **emptyDir for Prometheus storage** — simplification for portfolio; production would use a PersistentVolumeClaim
-- **Grafana admin password hardcoded** — deliberate simplification; production would use GCP Secret Manager
+- **Grafana admin password via K8s Secret** — loaded via `secretKeyRef`; production would use the Secrets Store CSI Driver to sync directly from GCP Secret Manager
 
 ### Grafana Dashboard
 A pre-provisioned "FastAPI — RED Method" dashboard with 4 panels:
@@ -113,6 +114,61 @@ A pre-provisioned "FastAPI — RED Method" dashboard with 4 panels:
 
 The dashboard loads automatically via Grafana's provisioning system (ConfigMap → volume mount → file provider).
 
+## Security Hardening
+
+Defense-in-depth applied at every layer: infrastructure (VPC, firewall, private cluster), workload (pod security, network policies), and secrets (Secret Manager, no hardcoded credentials).
+
+### Pod Security Standards
+
+All namespaces enforce the PSA `restricted` profile — the strictest built-in level in Kubernetes 1.25+. This requires:
+- Containers run as non-root
+- Read-only root filesystem
+- All Linux capabilities dropped
+- Seccomp profile set to `RuntimeDefault`
+- No privilege escalation
+
+**Why `restricted` over `baseline`?** Our containers already comply (Prometheus runs as UID 65534, Grafana as UID 472, the FastAPI app as a dedicated `appuser`). There's no reason to use a weaker profile when the workloads already meet the strictest standard.
+
+**Why PSA over OPA/Gatekeeper?** PSA is built into Kubernetes — zero extra infrastructure to deploy, maintain, or troubleshoot. It validates the same constraints. For a platform without custom admission policies, PSA is the right tool.
+
+### Network Policies
+
+Default deny-all on every namespace, with explicit allow policies for each legitimate traffic flow. This is the same zero-trust principle as the VPC deny-all firewall rule from the networking module — nothing communicates unless explicitly allowed.
+
+| Policy | Namespace | What it allows |
+|--------|-----------|----------------|
+| `default-deny-all` | monitoring | Blocks all ingress + egress (baseline) |
+| `allow-dns` | monitoring | UDP/TCP port 53 for service name resolution |
+| `allow-grafana-to-prometheus` | monitoring | Grafana → Prometheus on port 9090 |
+| `allow-prometheus-scrape` | monitoring | Prometheus → pod network for metrics collection |
+| `allow-prometheus-apiserver` | monitoring | Prometheus → kube-apiserver (172.16.0.0/28) for service discovery |
+| `default-deny-all` | app | Blocks all ingress + egress (baseline) |
+| `allow-app-egress` | app | App → Cloud SQL private IP (5432) + DNS |
+| `allow-prometheus-scrape` | app | Prometheus (monitoring ns) → app pods on port 8080 |
+
+**One policy per file** — makes it auditable. "Who can talk to the database?" → read one file.
+
+### Secret Management
+
+| Layer | Before | After |
+|-------|--------|-------|
+| Database password | Hardcoded `"changeme..."` in Terraform | `var.db_password` (sensitive) → Secret Manager |
+| Grafana password | Hardcoded `admin` in deployment YAML | K8s Secret → `secretKeyRef` in deployment |
+| Secret storage | None | GCP Secret Manager with IAM-based access |
+| Pod access | N/A | Workload Identity → `secretmanager.secretAccessor` role |
+
+**Why Secret Manager over Vault?** Secret Manager is a managed GCP service — no infrastructure to operate. It's IAM-integrated, which pairs directly with the Workload Identity setup from Project 1. The app's GCP service account already exists; we just grant it `secretAccessor`.
+
+**Why K8s Secret for Grafana (not CSI driver)?** The Secrets Store CSI Driver + GCP provider is the production path — it syncs secrets from Secret Manager directly into the pod without a K8s Secret object. But the CSI driver requires CRDs that won't validate in CI without a running cluster. The K8s Secret pattern here demonstrates the same `secretKeyRef` flow and validates cleanly. The README documents the upgrade path.
+
+### Container Image Scanning
+
+Trivy runs in CI on every Docker build and every Terraform/K8s config change:
+- **Image scan**: Checks the built container for CVEs in OS packages and application dependencies (CRITICAL + HIGH severity gate)
+- **IaC scan**: Checks Terraform and Kubernetes manifests for misconfigurations (CRITICAL + HIGH severity gate)
+
+**Why Trivy over Snyk/Grype?** Open source, first-party GitHub Action, scans both container images and IaC configs in one tool. No API keys or paid accounts needed.
+
 ## CI/CD
 
 GitHub Actions runs on every code change — no manual validation needed.
@@ -120,8 +176,9 @@ GitHub Actions runs on every code change — no manual validation needed.
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
 | **Terraform CI** | Pull request → `main` | Format check → Init + Validate → Plan (posted as PR comment) |
-| **Docker CI** | Push to `main` / PR touching `app/` | Builds the container image to verify the app still compiles |
-| **K8s Manifest Lint** | PR touching `k8s/` | Validates all manifests with `kubectl --dry-run=client` |
+| **Docker CI** | Push to `main` / PR touching `app/` | Builds the container image + Trivy vulnerability scan |
+| **K8s Manifest Lint** | PR touching `k8s/` | Validates all manifests with kubeconform |
+| **Security Scan** | PR touching `modules/`, `environments/`, `k8s/` | Trivy IaC misconfiguration scan on Terraform + K8s configs |
 
 The Terraform CI pipeline uses a read-only service account (`terraform-ci`) that can run `terraform plan` but never create or modify resources. Production would replace the JSON key with [Workload Identity Federation](https://cloud.google.com/iam/docs/workload-identity-federation) for keyless authentication.
 
@@ -131,29 +188,27 @@ The Terraform CI pipeline uses a read-only service account (`terraform-ci`) that
 gcp-infrastructure/
 ├── .github/workflows/         # CI/CD pipelines
 │   ├── terraform-ci.yml       # Terraform validation on PRs
-│   ├── docker-ci.yml          # Docker build on merge + PRs touching app/
-│   └── k8s-lint.yml           # K8s manifest validation on PRs touching k8s/
+│   ├── docker-ci.yml          # Docker build + Trivy image scan
+│   ├── k8s-lint.yml           # K8s manifest validation with kubeconform
+│   └── security-scan.yml      # Trivy IaC misconfiguration scan
 ├── modules/                   # Reusable Terraform modules
 │   ├── networking/            # VPC, subnets, firewall rules
 │   ├── iam/                   # Service accounts, role bindings
 │   ├── gke/                   # GKE Autopilot cluster
 │   ├── database/              # Cloud SQL Postgres
+│   ├── secrets/               # GCP Secret Manager + IAM bindings
 │   └── budget/                # Billing budget alerts
 ├── environments/
 │   └── dev/                   # Dev environment wiring
-├── k8s/monitoring/            # Kubernetes monitoring stack
-│   ├── namespace.yaml         # Dedicated monitoring namespace
-│   ├── prometheus/            # Prometheus server
-│   │   ├── rbac.yaml          # ServiceAccount + ClusterRole
-│   │   ├── configmap.yaml     # Scrape config with K8s service discovery
-│   │   ├── deployment.yaml    # Prometheus pod (health probes, resource limits)
-│   │   └── service.yaml       # ClusterIP service
-│   └── grafana/               # Grafana dashboards
-│       ├── configmap-datasource.yaml          # Auto-provision Prometheus
-│       ├── configmap-dashboard-provider.yaml  # Dashboard file provider
-│       ├── configmap-dashboard.yaml           # FastAPI RED method dashboard
-│       ├── deployment.yaml    # Grafana pod with provisioning mounts
-│       └── service.yaml       # ClusterIP service
+├── k8s/
+│   ├── monitoring/            # Monitoring stack (Prometheus + Grafana)
+│   │   ├── namespace.yaml     # Namespace with PSA restricted labels
+│   │   ├── network-policies/  # Network policies (default-deny + allow rules)
+│   │   ├── prometheus/        # Prometheus (deployment, RBAC, config, service)
+│   │   └── grafana/           # Grafana (deployment, secret, configs, service)
+│   └── app/                   # Application namespace
+│       ├── namespace.yaml     # Namespace with PSA restricted labels
+│       └── network-policies/  # Network policies (default-deny + allow rules)
 ├── app/                       # FastAPI application + Dockerfile
 └── docs/                      # Validation artifacts
 ```
@@ -192,11 +247,10 @@ Built with 12-factor principles: configuration via environment variables, statel
 ## What I'd Add in Production
 
 - ~~**Monitoring** (Project 3): Prometheus + Grafana on GKE for metrics and alerting~~ **Done** — see [Monitoring & Observability](#monitoring--observability) above
-- **Security hardening** (Project 4): Kubernetes network policies, pod security standards, secret management via Secret Manager
+- ~~**Security hardening** (Project 4): Network policies, pod security, secret management, container scanning~~ **Done** — see [Security Hardening](#security-hardening) above
+- **Secrets Store CSI Driver**: Sync secrets directly from GCP Secret Manager into pods, eliminating K8s Secret objects entirely
 - **Alerting rules**: Prometheus alertmanager with PagerDuty/Slack integration for SLO breaches
 - **Persistent storage for Prometheus**: PersistentVolumeClaim instead of emptyDir
-- **Grafana secrets**: Admin password via GCP Secret Manager instead of hardcoded value
 - **Multi-region**: Regional GKE clusters with global load balancing
-- **Secret management**: Replace hardcoded DB password with GCP Secret Manager
 - **DNS + TLS**: Cloud DNS + managed certificates via cert-manager
 - **Workload Identity Federation**: Replace CI service account key with keyless auth

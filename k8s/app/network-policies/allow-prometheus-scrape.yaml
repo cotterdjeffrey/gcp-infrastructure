@@ -1,0 +1,25 @@
+# Allow Prometheus (in the monitoring namespace) to scrape metrics from app pods.
+# This is a cross-namespace policy — Prometheus discovers app pods via annotations
+# and pulls /metrics on port 8080.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: app
+spec:
+  podSelector:
+    matchLabels:
+      app: fastapi
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 8080

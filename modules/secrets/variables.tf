@@ -3,18 +3,8 @@ variable "project_id" {
   type        = string
 }
 
-variable "region" {
-  description = "GCP region for resource deployment"
-  type        = string
-}
-
 variable "environment" {
-  description = "Environment name (dev, staging, prod)"
-  type        = string
-}
-
-variable "billing_account_id" {
-  description = "GCP billing account ID"
+  description = "Environment name"
   type        = string
 }
 
@@ -28,4 +18,9 @@ variable "grafana_admin_password" {
   description = "Grafana admin password"
   type        = string
   sensitive   = true
+}
+
+variable "app_service_account_email" {
+  description = "Email of the application GCP service account (for IAM binding)"
+  type        = string
 }

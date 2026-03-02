@@ -1,0 +1,17 @@
+# Allow DNS resolution for all pods in the monitoring namespace.
+# Without this, pods can't resolve service names (e.g., prometheus.monitoring.svc.cluster.local).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

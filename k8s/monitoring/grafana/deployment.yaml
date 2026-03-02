@@ -15,14 +15,29 @@ spec:
       labels:
         app: grafana
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        fsGroup: 472
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: grafana
           image: grafana/grafana:10.4.1
           env:
             - name: GF_SECURITY_ADMIN_PASSWORD
-              value: admin
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: password
           ports:
             - containerPort: 3000
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           resources:
             requests:
               cpu: 100m
@@ -49,6 +64,10 @@ spec:
               mountPath: /etc/grafana/provisioning/dashboards
             - name: dashboard-json
               mountPath: /var/lib/grafana/dashboards
+            - name: grafana-storage
+              mountPath: /var/lib/grafana
+            - name: grafana-tmp
+              mountPath: /tmp
       volumes:
         - name: datasource
           configMap:
@@ -59,3 +78,7 @@ spec:
         - name: dashboard-json
           configMap:
             name: grafana-dashboard-fastapi
+        - name: grafana-storage
+          emptyDir: {}
+        - name: grafana-tmp
+          emptyDir: {}

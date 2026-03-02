@@ -1,0 +1,26 @@
+name: Security Scan
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "modules/**"
+      - "environments/**"
+      - "k8s/**"
+
+jobs:
+  trivy-iac:
+    name: Trivy IaC Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan Terraform configs
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: config
+          scan-ref: .
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          trivyignores: .trivyignore

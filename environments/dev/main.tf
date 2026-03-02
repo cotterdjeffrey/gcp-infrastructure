@@ -34,6 +34,17 @@ module "database" {
   environment                 = var.environment
   network_id                  = module.networking.network_id
   private_services_connection = module.networking.private_services_connection
+  db_password                 = var.db_password
+}
+
+module "secrets" {
+  source = "../../modules/secrets"
+
+  project_id                = var.project_id
+  environment               = var.environment
+  db_password               = var.db_password
+  grafana_admin_password    = var.grafana_admin_password
+  app_service_account_email = module.iam.app_service_account_email
 }
 
 module "budget" {

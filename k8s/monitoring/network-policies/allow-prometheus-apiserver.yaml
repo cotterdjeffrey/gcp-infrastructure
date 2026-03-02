@@ -1,0 +1,21 @@
+# Allow Prometheus to reach the Kubernetes API server for service discovery.
+# Prometheus queries the API to discover pods with scrape annotations.
+# The API server runs on the GKE master nodes at 172.16.0.0/28 (configured in modules/gke).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-apiserver
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app: prometheus
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 172.16.0.0/28
+      ports:
+        - protocol: TCP
+          port: 443

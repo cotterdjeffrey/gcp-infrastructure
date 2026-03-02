@@ -34,3 +34,9 @@ variable "tier" {
   type        = string
   default     = "db-f1-micro"
 }
+
+variable "db_password" {
+  description = "Password for the application database user"
+  type        = string
+  sensitive   = true
+}

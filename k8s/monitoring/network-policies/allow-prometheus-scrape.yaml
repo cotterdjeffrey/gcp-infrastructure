@@ -1,0 +1,25 @@
+# Allow Prometheus to scrape metrics from pods across all namespaces.
+# Prometheus uses Kubernetes service discovery to find pods with
+# prometheus.io/scrape: "true" annotations, then pulls /metrics from them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app: prometheus
+  policyTypes:
+    - Egress
+  egress:
+    # App pods expose metrics on port 8080
+    - ports:
+        - protocol: TCP
+          port: 8080
+    # Node exporter and other standard metrics ports
+    - ports:
+        - protocol: TCP
+          port: 9090
+        - protocol: TCP
+          port: 9100

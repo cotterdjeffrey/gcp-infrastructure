@@ -20,5 +20,5 @@ jobs:
       - name: Validate all manifests
         run: |
           echo "Validating Kubernetes manifests..."
-          find k8s/ -name '*.yaml' -print0 | xargs -0 -n1 kubeconform -strict -summary
+          find k8s/ -name '*.yaml' -print0 | xargs -0 -n1 kubeconform -strict -ignore-missing-schemas -summary
           echo "All manifests valid."

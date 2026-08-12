@@ -51,3 +51,27 @@ resource "google_secret_manager_secret_iam_member" "grafana_password_access" {
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${var.grafana_service_account_email}"
 }
+
+# Claude API key for the RAG service.
+resource "google_secret_manager_secret" "anthropic_api_key" {
+  project   = var.project_id
+  secret_id = "${var.environment}-anthropic-api-key"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "anthropic_api_key" {
+  secret      = google_secret_manager_secret.anthropic_api_key.id
+  secret_data = var.anthropic_api_key
+}
+
+# The app reads the Claude API key via the same CSI driver + Workload Identity
+# path as the database password — no key in the image, manifest, or repo.
+resource "google_secret_manager_secret_iam_member" "app_anthropic_access" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.anthropic_api_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${var.app_service_account_email}"
+}

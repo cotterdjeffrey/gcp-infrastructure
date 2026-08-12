@@ -1,6 +1,6 @@
 # GCP Infrastructure — Terraform IaC + Monitoring + Security Hardening
 
-Production-grade GCP infrastructure defined entirely in Terraform, with Prometheus + Grafana observability and defense-in-depth security hardening. Demonstrates VPC networking, GKE Autopilot, Cloud SQL, IAM least-privilege, pod security standards, network policies, secret management, container image scanning, and a containerized FastAPI application — all validated via `terraform plan` with zero cloud spend.
+Production-grade GCP infrastructure defined entirely in Terraform, with Prometheus + Grafana observability and defense-in-depth security hardening. Demonstrates VPC networking, GKE Autopilot, Cloud SQL, IAM least-privilege, pod security standards, network policies, secret management, container image scanning, and a containerized FastAPI RAG service (pgvector + Claude API) — all validated via `terraform plan` with zero cloud spend.
 
 ## Architecture
 
@@ -99,7 +99,7 @@ The ~30-line middleware class is intentional. Libraries like `prometheus-fastapi
 | `http_requests_in_progress` | Gauge | method, endpoint | Current concurrency / saturation |
 
 ### Key Design Details
-- **Path label uses route template** (`/items/{item_id}`) not resolved path (`/items/42`) — prevents label cardinality explosion, a real production concern that would overwhelm Prometheus
+- **Path label uses the matched route template**, not the raw request path — so high-cardinality paths never explode the Prometheus label set, a real production concern that would overwhelm the metrics store
 - **Prometheus service discovery via annotations** — app pods get `prometheus.io/scrape: "true"`, Prometheus finds them automatically via Kubernetes SD
 - **ClusterIP for both services** — no external access; use `kubectl port-forward` for debugging
 - **emptyDir for Prometheus storage** — simplification for portfolio; production would use a PersistentVolumeClaim
@@ -235,18 +235,28 @@ docker run -p 8080:8080 gcp-infra-app
 
 ## The Application
 
-A FastAPI microservice with:
+A FastAPI **retrieval-augmented generation (RAG) service** — Bible Q&A grounded in
+scripture with verse citations. Retrieval runs against **pgvector in the Cloud SQL
+Postgres** instance the platform provisions (no separate vector database);
+generation streams from the **Claude API**, whose key is delivered by the same
+Secret Manager → CSI driver → Workload Identity pipeline as the database password.
+
+- `/api/search` — vector search over the verse index, returns matching passages
+- `/api/chat` — RAG chat: retrieves passages, then streams a grounded Claude answer
 - `/health` — Liveness probe (is the process alive?)
 - `/ready` — Readiness probe (can we reach the database?)
 - `/status` — App metadata for monitoring
-- `/items` — CRUD operations on a Postgres-backed resource
 - `/metrics` — Prometheus metrics (request rate, error rate, latency histograms)
 
-Built with 12-factor principles: configuration via environment variables, stateless processes, and a multi-stage Docker build running as a non-root user.
+Built with 12-factor principles: configuration via environment variables, stateless
+processes, the embedding model baked into the image (no runtime egress to load it),
+and a multi-stage Docker build running as a non-root user. `app/ingest.py` builds
+the pgvector index (create extension → download KJV → embed → insert).
 
 ## What I'd Add Next
 
-- **Secrets Store CSI Driver**: Sync secrets directly from GCP Secret Manager into pods, eliminating K8s Secret objects entirely
+- **Deploy to a live cluster**: currently validated via `terraform plan` + `kubeconform` with zero cloud spend; a real apply would give a live endpoint (and a monthly bill)
+- **Reranking**: a cross-encoder second stage over the pgvector candidates for sharper retrieval
 - **Alerting rules**: Prometheus alertmanager with PagerDuty/Slack integration for SLO breaches
 - **Persistent storage for Prometheus**: PersistentVolumeClaim instead of emptyDir
 - **Multi-region**: Regional GKE clusters with global load balancing

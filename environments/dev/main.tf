@@ -44,6 +44,7 @@ module "secrets" {
   environment                   = var.environment
   db_password                   = var.db_password
   grafana_admin_password        = var.grafana_admin_password
+  anthropic_api_key             = var.anthropic_api_key
   app_service_account_email     = module.iam.app_service_account_email
   grafana_service_account_email = module.iam.grafana_service_account_email
 }

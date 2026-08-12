@@ -20,6 +20,12 @@ variable "grafana_admin_password" {
   sensitive   = true
 }
 
+variable "anthropic_api_key" {
+  description = "Claude API key for the RAG service"
+  type        = string
+  sensitive   = true
+}
+
 variable "app_service_account_email" {
   description = "Email of the application GCP service account (for IAM binding)"
   type        = string

@@ -1,58 +1,38 @@
-"""FastAPI application demonstrating a cloud-native microservice."""
+"""FastAPI RAG service — retrieval-augmented Bible Q&A on the platform.
+
+Retrieval runs against pgvector in Cloud SQL (app/rag.py); generation streams
+from the Claude API (app/llm.py). Instrumented with RED-method Prometheus
+metrics so it is scraped by the in-cluster Prometheus (k8s/monitoring).
+"""
 
 import os
 import time
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, Query, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from pydantic import BaseModel
-from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
-from sqlalchemy import create_engine, Column, Integer, String, text
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
-# 12-factor: all config from environment variables.
-# In-cluster, DB_PASSWORD is synced from GCP Secret Manager by the Secrets Store
-# CSI driver (Workload Identity) — it is never baked into the image or manifest.
-# An explicit DATABASE_URL still wins for local development.
-def _build_database_url() -> str:
-    explicit = os.getenv("DATABASE_URL")
-    if explicit:
-        return explicit
-    user = os.getenv("DB_USER", "app")
-    password = os.getenv("DB_PASSWORD", "")
-    host = os.getenv("DB_HOST", "localhost")
-    port = os.getenv("DB_PORT", "5432")
-    name = os.getenv("DB_NAME", "app")
-    return f"postgresql://{user}:{password}@{host}:{port}/{name}"
+from llm import chat_stream
+from rag import SessionLocal, search
 
+RELEVANCE_THRESHOLD = float(os.getenv("RELEVANCE_THRESHOLD", "1.0"))
+HISTORY_WINDOW = int(os.getenv("HISTORY_WINDOW", "6"))
 
-DATABASE_URL = _build_database_url()
+app = FastAPI(title="Pocket Preacher — RAG Service")
 
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(bind=engine)
-Base = declarative_base()
-
-
-class Item(Base):
-    __tablename__ = "items"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), nullable=False)
-    description = Column(String(1000), default="")
-
-
-class ItemCreate(BaseModel):
-    name: str
-    description: str = ""
-
-
-class ItemResponse(BaseModel):
-    id: int
-    name: str
-    description: str
-
-    model_config = {"from_attributes": True}
-
-
-app = FastAPI(title="GCP Infrastructure Demo App")
+# Frontend origin is environment-specific; unset means no cross-origin browser access.
+_cors_origin = os.getenv("FRONTEND_ORIGIN")
+if _cors_origin:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[_cors_origin],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # --- Prometheus metrics (RED method) ---
 REQUEST_COUNT = Counter(
@@ -75,15 +55,13 @@ REQUESTS_IN_PROGRESS = Gauge(
 
 @app.middleware("http")
 async def prometheus_middleware(request: Request, call_next):
-    # Use route template (e.g. /items/{item_id}) to avoid cardinality explosion
-    # Fall back to path for unmatched routes (404s)
     method = request.method
     path = request.url.path
 
     if path == "/metrics":
         return await call_next(request)
 
-    # Resolve the route template before the request completes
+    # Resolve the route template (e.g. /items/{id}) to avoid label cardinality explosion.
     endpoint = path
     for route in app.routes:
         if hasattr(route, "path") and hasattr(route, "methods"):
@@ -111,7 +89,6 @@ async def prometheus_middleware(request: Request, call_next):
 
 @app.get("/metrics", include_in_schema=False)
 def metrics():
-    """Prometheus metrics endpoint."""
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
@@ -136,45 +113,57 @@ def ready(db: Session = Depends(get_db)):
         db.execute(text("SELECT 1"))
         return {"status": "ready", "database": "connected"}
     except Exception:
-        raise HTTPException(status_code=503, detail="Database not ready")
+        return Response(status_code=503)
 
 
 @app.get("/status")
 def status():
-    """App metadata for monitoring dashboards."""
     return {
-        "app": "gcp-infrastructure-demo",
+        "app": "pocket-preacher-rag",
         "version": "1.0.0",
         "environment": os.getenv("ENVIRONMENT", "development"),
     }
 
 
-@app.post("/items", response_model=ItemResponse, status_code=201)
-def create_item(item: ItemCreate, db: Session = Depends(get_db)):
-    db_item = Item(name=item.name, description=item.description)
-    db.add(db_item)
-    db.commit()
-    db.refresh(db_item)
-    return db_item
+class HistoryMessage(BaseModel):
+    role: str
+    content: str
 
 
-@app.get("/items", response_model=list[ItemResponse])
-def list_items(db: Session = Depends(get_db)):
-    return db.query(Item).all()
+class ChatRequest(BaseModel):
+    message: str
+    history: list[HistoryMessage] = []
 
 
-@app.get("/items/{item_id}", response_model=ItemResponse)
-def get_item(item_id: int, db: Session = Depends(get_db)):
-    item = db.query(Item).filter(Item.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
-    return item
+@app.get("/api/search")
+def search_verses(
+    q: str = Query(..., description="Search query"),
+    top_k: int = Query(8, ge=1, le=20),
+):
+    """Raw vector search — returns relevant passages without LLM generation."""
+    return {"query": q, "results": search(q, top_k=top_k)}
 
 
-@app.delete("/items/{item_id}", status_code=204)
-def delete_item(item_id: int, db: Session = Depends(get_db)):
-    item = db.query(Item).filter(Item.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
-    db.delete(item)
-    db.commit()
+@app.post("/api/chat")
+def chat(req: ChatRequest):
+    """RAG chat — retrieves passages from pgvector, then streams a Claude answer."""
+    passages = search(req.message)
+    relevant = [p for p in passages if p["distance"] <= RELEVANCE_THRESHOLD]
+    history = [
+        {"role": m.role, "content": m.content}
+        for m in req.history[-HISTORY_WINDOW:]
+    ]
+
+    if not relevant:
+        async def fallback():
+            yield (
+                "Hmm, I'm not finding anything about that in Scripture! "
+                "I'm a Bible guide — try asking me about verses, stories, or teachings."
+            )
+        return StreamingResponse(fallback(), media_type="text/plain")
+
+    async def generate():
+        async for chunk in chat_stream(req.message, relevant, history):
+            yield chunk
+
+    return StreamingResponse(generate(), media_type="text/plain")

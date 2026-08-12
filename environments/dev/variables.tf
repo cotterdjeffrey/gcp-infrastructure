@@ -29,3 +29,9 @@ variable "grafana_admin_password" {
   type        = string
   sensitive   = true
 }
+
+variable "anthropic_api_key" {
+  description = "Claude API key for the RAG service"
+  type        = string
+  sensitive   = true
+}

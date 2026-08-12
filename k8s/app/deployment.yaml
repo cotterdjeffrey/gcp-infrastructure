@@ -54,6 +54,14 @@ spec:
                 secretKeyRef:
                   name: app-secrets
                   key: db-password
+            # Claude API key — synced from Secret Manager by the same CSI driver.
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: anthropic-api-key
+            - name: ANTHROPIC_MODEL
+              value: claude-opus-5
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

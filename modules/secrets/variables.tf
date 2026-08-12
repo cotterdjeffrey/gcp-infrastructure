@@ -24,3 +24,8 @@ variable "app_service_account_email" {
   description = "Email of the application GCP service account (for IAM binding)"
   type        = string
 }
+
+variable "grafana_service_account_email" {
+  description = "Email of the Grafana GCP service account (for IAM binding)"
+  type        = string
+}

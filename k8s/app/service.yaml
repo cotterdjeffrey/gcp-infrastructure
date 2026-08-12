@@ -1,0 +1,17 @@
+# ClusterIP service fronting the FastAPI pods. In-cluster clients reach the app
+# at http://fastapi.app.svc.cluster.local; Prometheus scrapes pods directly by IP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: fastapi
+  namespace: app
+  labels:
+    app: fastapi
+spec:
+  type: ClusterIP
+  selector:
+    app: fastapi
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

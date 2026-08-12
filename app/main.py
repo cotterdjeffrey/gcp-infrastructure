@@ -9,11 +9,23 @@ from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTEN
 from sqlalchemy import create_engine, Column, Integer, String, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
-# 12-factor: all config from environment variables
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://app:changeme@localhost:5432/app",
-)
+# 12-factor: all config from environment variables.
+# In-cluster, DB_PASSWORD is synced from GCP Secret Manager by the Secrets Store
+# CSI driver (Workload Identity) — it is never baked into the image or manifest.
+# An explicit DATABASE_URL still wins for local development.
+def _build_database_url() -> str:
+    explicit = os.getenv("DATABASE_URL")
+    if explicit:
+        return explicit
+    user = os.getenv("DB_USER", "app")
+    password = os.getenv("DB_PASSWORD", "")
+    host = os.getenv("DB_HOST", "localhost")
+    port = os.getenv("DB_PORT", "5432")
+    name = os.getenv("DB_NAME", "app")
+    return f"postgresql://{user}:{password}@{host}:{port}/{name}"
+
+
+DATABASE_URL = _build_database_url()
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)

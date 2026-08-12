@@ -103,7 +103,7 @@ The ~30-line middleware class is intentional. Libraries like `prometheus-fastapi
 - **Prometheus service discovery via annotations** — app pods get `prometheus.io/scrape: "true"`, Prometheus finds them automatically via Kubernetes SD
 - **ClusterIP for both services** — no external access; use `kubectl port-forward` for debugging
 - **emptyDir for Prometheus storage** — simplification for portfolio; production would use a PersistentVolumeClaim
-- **Grafana admin password via K8s Secret** — loaded via `secretKeyRef`; production would use the Secrets Store CSI Driver to sync directly from GCP Secret Manager
+- **Secrets via the Secrets Store CSI Driver** — the app DB password and Grafana admin password are pulled from GCP Secret Manager by the GKE-managed CSI driver (authenticated via Workload Identity) and synced into short-lived K8s Secrets for env-var consumption; no long-lived credentials are stored in the manifests
 
 ### Grafana Dashboard
 A pre-provisioned "FastAPI — RED Method" dashboard with 4 panels:
@@ -152,14 +152,14 @@ Default deny-all on every namespace, with explicit allow policies for each legit
 
 | Layer | Before | After |
 |-------|--------|-------|
-| Database password | Hardcoded `"changeme..."` in Terraform | `var.db_password` (sensitive) → Secret Manager |
-| Grafana password | Hardcoded `admin` in deployment YAML | K8s Secret → `secretKeyRef` in deployment |
+| Database password | Hardcoded `"changeme..."` in Terraform | Secret Manager → CSI driver → pod (Workload Identity) |
+| Grafana password | Hardcoded `admin` in deployment YAML | Secret Manager → CSI driver → pod (Workload Identity) |
 | Secret storage | None | GCP Secret Manager with IAM-based access |
 | Pod access | N/A | Workload Identity → `secretmanager.secretAccessor` role |
 
-**Why Secret Manager over Vault?** Secret Manager is a managed GCP service — no infrastructure to operate. It's IAM-integrated, which pairs directly with the Workload Identity setup from Project 1. The app's GCP service account already exists; we just grant it `secretAccessor`.
+**Why Secret Manager over Vault?** Secret Manager is a managed GCP service — no infrastructure to operate. It's IAM-integrated, which pairs directly with the Workload Identity setup from Project 1. Each workload's GCP service account is granted only `secretAccessor` on the specific secret it needs.
 
-**Why K8s Secret for Grafana (not CSI driver)?** The Secrets Store CSI Driver + GCP provider is the production path — it syncs secrets from Secret Manager directly into the pod without a K8s Secret object. But the CSI driver requires CRDs that won't validate in CI without a running cluster. The K8s Secret pattern here demonstrates the same `secretKeyRef` flow and validates cleanly. The README documents the upgrade path.
+**How secrets reach the pods.** The cluster enables the GKE-managed Secrets Store CSI driver (`secret_manager_config` on the Autopilot cluster). Each workload declares a `SecretProviderClass` naming the Secret Manager secret it needs; mounting the CSI volume pulls the value — authenticated as the pod's GCP service account via Workload Identity — and mirrors it into a short-lived K8s Secret consumed with `secretKeyRef`. No long-lived keys, and no secret values committed to the repo. The `SecretProviderClass` CRD is skipped by CI's `kubeconform` via `-ignore-missing-schemas`.
 
 ### Container Image Scanning
 

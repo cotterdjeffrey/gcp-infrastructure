@@ -42,3 +42,12 @@ resource "google_secret_manager_secret_iam_member" "app_db_access" {
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${var.app_service_account_email}"
 }
+
+# Grant the Grafana service account access to the Grafana admin password.
+# Grafana reads it via the Secrets Store CSI driver (Workload Identity).
+resource "google_secret_manager_secret_iam_member" "grafana_password_access" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.grafana_admin_password.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${var.grafana_service_account_email}"
+}

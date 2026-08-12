@@ -15,6 +15,8 @@ spec:
       labels:
         app: grafana
     spec:
+      # Authenticate to Secret Manager via Workload Identity.
+      serviceAccountName: grafana
       securityContext:
         runAsNonRoot: true
         runAsUser: 472
@@ -58,6 +60,11 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
           volumeMounts:
+            # Mounting the CSI volume is what triggers the Secret Manager sync
+            # into the grafana-admin Secret referenced above.
+            - name: admin-secret
+              mountPath: /mnt/secrets
+              readOnly: true
             - name: datasource
               mountPath: /etc/grafana/provisioning/datasources
             - name: dashboard-provider
@@ -69,6 +76,12 @@ spec:
             - name: grafana-tmp
               mountPath: /tmp
       volumes:
+        - name: admin-secret
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: grafana-admin
         - name: datasource
           configMap:
             name: grafana-datasource

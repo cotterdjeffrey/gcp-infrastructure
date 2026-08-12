@@ -42,9 +42,27 @@ resource "google_project_iam_member" "app_cloudsql" {
   member  = "serviceAccount:${google_service_account.app_workload.email}"
 }
 
-# Allow GKE to impersonate the app SA via Workload Identity
+# Allow GKE to impersonate the app SA via Workload Identity.
+# Binds the app-workload KSA in the "app" namespace (k8s/app/serviceaccount.yaml)
+# to this GCP service account.
 resource "google_service_account_iam_member" "app_workload_identity" {
   service_account_id = google_service_account.app_workload.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[default/app-workload]"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[app/app-workload]"
+}
+
+# Dedicated service account for Grafana, so it can read its admin password from
+# Secret Manager via Workload Identity (same pattern as the app workload).
+resource "google_service_account" "grafana" {
+  account_id   = "${var.environment}-grafana"
+  display_name = "Grafana Service Account (${var.environment})"
+  project      = var.project_id
+}
+
+# Binds the grafana KSA in the "monitoring" namespace
+# (k8s/monitoring/grafana/serviceaccount.yaml) to this GCP service account.
+resource "google_service_account_iam_member" "grafana_workload_identity" {
+  service_account_id = google_service_account.grafana.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[monitoring/grafana]"
 }

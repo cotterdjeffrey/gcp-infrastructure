@@ -30,6 +30,14 @@ resource "google_container_cluster" "autopilot" {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
 
+  # GKE-managed Secrets Store CSI driver for Secret Manager. Lets pods mount
+  # secrets directly from Secret Manager (authenticated via Workload Identity)
+  # instead of storing them in the cluster. Consumed by the app's
+  # SecretProviderClass (k8s/app/secret-provider-class.yaml).
+  secret_manager_config {
+    enabled = true
+  }
+
   # Use the dedicated node service account instead of default compute SA
   cluster_autoscaling {
     auto_provisioning_defaults {

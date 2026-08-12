@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi
+  namespace: app
+  labels:
+    app: fastapi
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fastapi
+  template:
+    metadata:
+      labels:
+        app: fastapi
+      annotations:
+        # Prometheus discovers this pod via these annotations (see
+        # k8s/monitoring/prometheus/configmap.yaml) and scrapes /metrics on 8080.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Authenticate to GCP (Cloud SQL, Secret Manager) via Workload Identity.
+      serviceAccountName: app-workload
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: fastapi
+          # CI builds gcp-infra-app:<git-sha> (see .github/workflows/docker-ci.yml).
+          # A real deploy would pin an Artifact Registry image by digest.
+          image: gcp-infra-app:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ENVIRONMENT
+              value: dev
+            # Non-secret DB connection params. Host is the Cloud SQL private IP
+            # (module.database output); set per environment at deploy time.
+            - name: DB_HOST
+              value: REPLACE_WITH_CLOUD_SQL_PRIVATE_IP
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: app
+            - name: DB_USER
+              value: app
+            # Password is synced from GCP Secret Manager by the Secrets Store CSI
+            # driver (see secret-provider-class.yaml) — never hardcoded.
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: db-password
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            # Mounting the CSI volume is what triggers the Secret Manager sync.
+            - name: db-secret
+              mountPath: /mnt/secrets
+              readOnly: true
+            # readOnlyRootFilesystem is true, so give the app a writable /tmp.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: db-secret
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: app-db
+        - name: tmp
+          emptyDir: {}

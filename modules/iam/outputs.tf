@@ -7,3 +7,8 @@ output "app_service_account_email" {
   description = "Email of the app workload service account"
   value       = google_service_account.app_workload.email
 }
+
+output "grafana_service_account_email" {
+  description = "Email of the Grafana workload service account"
+  value       = google_service_account.grafana.email
+}

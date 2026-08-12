@@ -40,11 +40,12 @@ module "database" {
 module "secrets" {
   source = "../../modules/secrets"
 
-  project_id                = var.project_id
-  environment               = var.environment
-  db_password               = var.db_password
-  grafana_admin_password    = var.grafana_admin_password
-  app_service_account_email = module.iam.app_service_account_email
+  project_id                    = var.project_id
+  environment                   = var.environment
+  db_password                   = var.db_password
+  grafana_admin_password        = var.grafana_admin_password
+  app_service_account_email     = module.iam.app_service_account_email
+  grafana_service_account_email = module.iam.grafana_service_account_email
 }
 
 module "budget" {
